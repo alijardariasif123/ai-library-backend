@@ -1,0 +1,55 @@
+{
+    "name": "study-assistant-ai-backend",
+    "version": "1.0.0",
+    "description": "Backend for AI-Powered Intelligent Study Assistant (MERN + Google Gemini + OCR + Razorpay + MongoDB)",
+    "main": "server.js",
+    "type": "commonjs",
+    "scripts": {
+        "dev": "nodemon server.js",
+        "start": "node server.js",
+        "test": "jest --runInBand"
+    },
+    "keywords": [
+        "node",
+        "express",
+        "mongodb",
+        "mern",
+        "ai",
+        "gemini",
+        "ocr",
+        "razorpay",
+        "bullmq",
+        "redis",
+        "study-assistant"
+    ],
+    "author": "Asif (BCA Final Year Project)",
+    "license": "MIT",
+    "dependencies": {
+        "@openrouter/sdk": "^0.2.9",
+        "axios": "^1.13.2",
+        "bcrypt": "^5.1.1",
+        "bcryptjs": "^3.0.3",
+        "bullmq": "^5.12.0",
+        "cookie-parser": "^1.4.7",
+        "cors": "^2.8.5",
+        "dotenv": "^16.6.1",
+        "express": "^4.19.2",
+        "ioredis": "^5.4.2",
+        "jsonwebtoken": "^9.0.3",
+        "mongoose": "^8.6.0",
+        "morgan": "^1.10.1",
+        "multer": "^1.4.5-lts.1",
+        "razorpay": "^2.9.5"
+    },
+    "devDependencies": {
+        "jest": "^29.7.0",
+        "nodemon": "^3.1.0",
+        "supertest": "^7.0.0"
+    },
+    "jest": {
+        "testEnvironment": "node",
+        "testMatch": [
+            "**/tests/**/*.test.js"
+        ]
+    }
+}

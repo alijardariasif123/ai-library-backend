@@ -1,0 +1,248 @@
+// File: backend/routes/docs.js
+// Routes for document upload, listing, status, and deletion
+// Improved: safer multer handling, MIME basic validation, robust queueing, async file ops.
+
+const express = require('express');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs').promises;
+const fsSync = require('fs');
+
+const { authMiddleware } = require('../middleware/auth');
+const Document = require('../models/Document');
+const { addDocumentProcessingJob } = require('../queue/processor');
+
+const router = express.Router();
+
+// Config via env (sensible defaults)
+const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, '..', 'uploads');
+const MAX_UPLOAD_SIZE = parseInt(process.env.MAX_UPLOAD_SIZE || String(50 * 1024 * 1024), 10); // default 50MB
+const ALLOWED_MIMETYPES = (process.env.ALLOWED_MIMETYPES || 'application/pdf,image/png,image/jpeg').split(',');
+
+// ensure upload dir exists (sync during startup)
+if (!fsSync.existsSync(UPLOAD_DIR)) {
+  fsSync.mkdirSync(UPLOAD_DIR, { recursive: true });
+}
+
+// Multer storage
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, UPLOAD_DIR);
+  },
+  filename: function (req, file, cb) {
+    // Keep original extension but generate safe unique name
+    const ext = path.extname(file.originalname).toLowerCase();
+    const safeBase = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    cb(null, safeBase + ext);
+  }
+});
+
+const upload = multer({
+  storage,
+  limits: {
+    fileSize: MAX_UPLOAD_SIZE
+  },
+  fileFilter: function (req, file, cb) {
+    // basic MIME check (not bulletproof, but reduces bad uploads)
+    if (ALLOWED_MIMETYPES.includes(file.mimetype)) {
+      return cb(null, true);
+    }
+    const err = new Error('Invalid file type');
+    err.code = 'INVALID_MIME';
+    return cb(err);
+  }
+});
+
+// Middleware wrapper to handle multer errors gracefully
+function multerHandler(fieldName) {
+  return (req, res, next) => {
+    const handler = upload.single(fieldName);
+    handler(req, res, (err) => {
+      if (err) {
+        console.error('Multer upload error:', err);
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          return res.status(413).json({ success: false, message: 'File too large.' });
+        }
+        if (err.code === 'INVALID_MIME') {
+          return res.status(400).json({ success: false, message: 'Invalid file type.' });
+        }
+        return res.status(400).json({ success: false, message: 'File upload failed.' });
+      }
+      next();
+    });
+  };
+}
+
+// Utility: return a safe doc object for responses
+function safeDocumentPayload(doc) {
+  if (!doc) return null;
+  const plain = typeof doc.toObject === 'function' ? doc.toObject() : doc;
+  // remove any fields you don't want to send back (none sensitive here)
+  return plain;
+}
+
+// ==============================
+// POST /api/docs/upload
+// Upload a new document and push to OCR queue
+// ==============================
+router.post('/upload', authMiddleware, multerHandler('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: 'No file uploaded.'
+      });
+    }
+
+    // Persist document record
+    const newDoc = await Document.create({
+      userId: req.user._id,
+      filename: req.file.originalname,
+      filePath: path.resolve(req.file.path),
+      mimeType: req.file.mimetype,
+      size: req.file.size,
+      status: 'processing'
+    });
+
+    // Push job to BullMQ OCR queue — handle queue errors gracefully
+    try {
+      await addDocumentProcessingJob(newDoc._id.toString(), newDoc.filePath);
+    } catch (queueErr) {
+      console.error('Failed to enqueue OCR job:', queueErr);
+      // mark document as errored so admin/UI shows problem
+      await Document.findByIdAndUpdate(newDoc._id, {
+        status: 'error',
+        errorMessage: 'Failed to enqueue OCR job'
+      }).exec();
+      return res.status(500).json({
+        success: false,
+        message: 'Uploaded but failed to start processing. Admin will be notified.'
+      });
+    }
+
+    return res.status(201).json({
+      success: true,
+      message: 'Document uploaded successfully. Processing started.',
+      document: safeDocumentPayload(newDoc)
+    });
+  } catch (err) {
+    console.error('Upload error:', err);
+
+    // If multer wrote file but DB failed, try to cleanup file asynchronously
+    if (req.file && req.file.path) {
+      try {
+        await fs.unlink(path.resolve(req.file.path));
+      } catch (e) {
+        console.warn('Failed to cleanup uploaded file after DB error:', e);
+      }
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to upload document.'
+    });
+  }
+});
+
+// ==============================
+// GET /api/docs
+// List all documents for logged-in user
+// ==============================
+router.get('/', authMiddleware, async (req, res) => {
+  try {
+    const docs = await Document.find({ userId: req.user._id })
+      .sort({ createdAt: -1 })
+      .lean()
+      .exec();
+
+    return res.status(200).json({
+      success: true,
+      documents: docs
+    });
+  } catch (err) {
+    console.error('List docs error:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch documents.'
+    });
+  }
+});
+
+// ==============================
+// GET /api/docs/:id
+// Get single document details
+// ==============================
+router.get('/:id', authMiddleware, async (req, res) => {
+  try {
+    const doc = await Document.findOne({
+      _id: req.params.id,
+      userId: req.user._id
+    }).lean();
+
+    if (!doc) {
+      return res.status(404).json({
+        success: false,
+        message: 'Document not found.'
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      document: doc
+    });
+  } catch (err) {
+    console.error('Get doc error:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch document.'
+    });
+  }
+});
+
+// ==============================
+// DELETE /api/docs/:id
+// Delete document + file
+// ==============================
+router.delete('/:id', authMiddleware, async (req, res) => {
+  try {
+    const doc = await Document.findOneAndDelete({
+      _id: req.params.id,
+      userId: req.user._id
+    }).exec();
+
+    if (!doc) {
+      return res.status(404).json({
+        success: false,
+        message: 'Document not found.'
+      });
+    }
+
+    // Delete file from disk asynchronously (don't block response)
+    if (doc.filePath) {
+      (async () => {
+        try {
+          const fp = path.resolve(doc.filePath);
+          if (fsSync.existsSync(fp)) {
+            await fs.unlink(fp);
+            console.log('Deleted file:', fp);
+          }
+        } catch (e) {
+          console.warn('Failed deleting file for document', doc._id, e);
+        }
+      })();
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Document deleted successfully.'
+    });
+  } catch (err) {
+    console.error('Delete doc error:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to delete document.'
+    });
+  }
+});
+
+module.exports = router;
