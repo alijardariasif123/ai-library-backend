@@ -18,7 +18,7 @@ const documentSchema = new mongoose.Schema(
       trim: true
     },
 
-    filePath: {
+    fileUrl: {
       type: String,
       required: true,
       trim: true
