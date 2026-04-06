@@ -18,6 +18,12 @@ const documentSchema = new mongoose.Schema(
       trim: true
     },
 
+    filePath: {
+      type: String,
+      required: true,
+      trim: true
+    },
+   
     fileUrl: {
       type: String,
       required: true,
