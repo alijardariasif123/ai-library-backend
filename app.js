@@ -14,6 +14,8 @@ const { authMiddleware } = require('./middleware/auth');
 
 const app = express();
 
+app.use('/uploads', express.static('uploads'));
+
 // ==============================
 // ✅ CORS (explicit & safe)
 // ==============================

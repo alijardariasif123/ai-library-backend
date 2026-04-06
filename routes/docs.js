@@ -94,32 +94,38 @@ router.post('/upload', authMiddleware, multerHandler('file'), async (req, res) =
       });
     }
 
-    // Persist document record
-    const newDoc = await Document.create({
-      userId: req.user._id,
-      filename: req.file.originalname,
-      filePath: path.resolve(req.file.path),
-      mimeType: req.file.mimetype,
-      size: req.file.size,
-      status: 'processing'
-    });
+   // 🔥 Build public file URL (VERY IMPORTANT)
+const fileUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
 
-    // Push job to BullMQ OCR queue — handle queue errors gracefully
-    try {
-      await addDocumentProcessingJob(newDoc._id.toString(), newDoc.filePath);
-    } catch (queueErr) {
-      console.error('Failed to enqueue OCR job:', queueErr);
-      // mark document as errored so admin/UI shows problem
-      await Document.findByIdAndUpdate(newDoc._id, {
-        status: 'error',
-        errorMessage: 'Failed to enqueue OCR job'
-      }).exec();
-      return res.status(500).json({
-        success: false,
-        message: 'Uploaded but failed to start processing. Admin will be notified.'
-      });
-    }
+// Persist document record
+const newDoc = await Document.create({
+  userId: req.user._id,
+  filename: req.file.originalname,
+  filePath: path.resolve(req.file.path), // local backup (optional)
+  fileUrl: fileUrl, // 🔥 NEW (important for worker)
+  mimeType: req.file.mimetype,
+  size: req.file.size,
+  status: 'processing'
+});
 
+// Push job to BullMQ OCR queue — handle queue errors gracefully
+try {
+  // 🔥 send fileUrl instead of filePath
+  await addDocumentProcessingJob(newDoc._id.toString(), fileUrl);
+
+} catch (queueErr) {
+  console.error('Failed to enqueue OCR job:', queueErr);
+
+  await Document.findByIdAndUpdate(newDoc._id, {
+    status: 'error',
+    errorMessage: 'Failed to enqueue OCR job'
+  }).exec();
+
+  return res.status(500).json({
+    success: false,
+    message: 'Uploaded but failed to start processing. Admin will be notified.'
+  });
+}
     return res.status(201).json({
       success: true,
       message: 'Document uploaded successfully. Processing started.',
