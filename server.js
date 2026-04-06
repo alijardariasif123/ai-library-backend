@@ -58,7 +58,7 @@ async function startServer() {
     server = http.createServer(app);
 
     server.listen(PORT, () => {
-      console.log(`🚀 Backend server running on http://localhost:${PORT}`);
+      console.log(`🚀 Backend server running on port ${PORT}`);
     });
 
     // Graceful shutdown handlers
