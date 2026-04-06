@@ -271,9 +271,9 @@ const router = express.Router();
 // CLOUDINARY CONFIG
 // ==============================
 cloudinary.config({
-  cloud_name: process.env.CLOUD_NAME,
-  api_key: process.env.CLOUD_API_KEY,
-  api_secret: process.env.CLOUD_API_SECRET
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
 // ==============================
@@ -314,7 +314,9 @@ router.post('/upload', authMiddleware, upload.single('file'), async (req, res) =
         message: 'No file uploaded.'
       });
     }
-
+    console.log("📩 Upload route hit");
+    console.log("FILE DATA:", req.file);
+    
     // ✅ Cloudinary URL
     const fileUrl = req.file.path;
 
