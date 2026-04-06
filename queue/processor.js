@@ -175,8 +175,10 @@ if (!process.env.REDIS_HOST) {
 }
 
 const connection = new IORedis({
-  host: process.env.REDIS_HOST || 'redis',
+  host: process.env.REDIS_HOST,
   port: parseInt(process.env.REDIS_PORT || '6379', 10),
+  password: process.env.REDIS_PASSWORD,   // 🔥 ADD THIS
+  tls: {},                                // 🔥 VERY IMPORTANT (Upstash ke liye)
   maxRetriesPerRequest: null,
   enableReadyCheck: false
 });
