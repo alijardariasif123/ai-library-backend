@@ -440,13 +440,9 @@ try {
 }
 
 // ==============================
-// REDIS CONNECTION
+// 🔥 REDIS CONNECTION (FIXED)
 // ==============================
-const connection = new IORedis({
-  host: process.env.REDIS_HOST,
-  port: parseInt(process.env.REDIS_PORT || '6379', 10),
-  password: process.env.REDIS_PASSWORD,
-  tls: {},
+const connection = new IORedis(process.env.REDIS_URL, {
   maxRetriesPerRequest: null,
   enableReadyCheck: false
 });
@@ -455,17 +451,19 @@ const connection = new IORedis({
 // QUEUE
 // ==============================
 const QUEUE_NAME = process.env.DOC_QUEUE_NAME || 'document-processing';
+
 const documentQueue = new Queue(QUEUE_NAME, { connection });
 
 // ==============================
-// ADD JOB (FIXED)
+// ADD JOB
 // ==============================
 async function addDocumentProcessingJob(documentId, fileUrl) {
+  console.log('🚀 Adding job:', documentId);
   return documentQueue.add('process-document', { documentId, fileUrl });
 }
 
 // ==============================
-// WORKER (FIXED)
+// WORKER
 // ==============================
 const worker = new Worker(
   QUEUE_NAME,
@@ -475,8 +473,7 @@ const worker = new Worker(
     console.log('📥 Processing:', documentId);
 
     try {
-      // ✅ DB से document fetch
-      const doc = await Document.findById(documentId).lean();
+      const doc = await Document.findById(documentId);
 
       if (!doc) throw new Error('Document not found');
       if (!doc.fileUrl) throw new Error('fileUrl missing');
@@ -489,18 +486,20 @@ const worker = new Worker(
       });
 
       // ======================
-      // OCR CALL (FIXED)
+      // 🔥 OCR CALL
       // ======================
+      console.log('📡 Calling OCR:', fileUrl);
+
       const ocrResponse = await axios.post(
         `${process.env.WORKER_URL}/process`,
-        { documentId, fileUrl }, // ✅ FIX
+        { documentId, fileUrl },
         { timeout: 1000 * 60 * 10 }
       );
 
       const { pages, textPerPage } = ocrResponse.data;
 
       if (!Array.isArray(textPerPage)) {
-        throw new Error('OCR failed');
+        throw new Error('OCR failed - invalid response');
       }
 
       // ======================
@@ -514,34 +513,34 @@ const worker = new Worker(
       });
 
       // ======================
-      // CREATE CHUNKS
+      // CHUNKS (FIXED)
       // ======================
       await Chunk.deleteMany({ documentId });
 
-      const chunks = textPerPage.map((text, i) => ({
-        documentId,
-        chunkIndex: i,
-        text,
-        pageNo: i + 1
-      }));
-
-      await Chunk.insertMany(chunks);
+      const chunkDocs = await Chunk.insertMany(
+        textPerPage.map((text, i) => ({
+          documentId,
+          chunkIndex: i,
+          text,
+          pageNo: i + 1
+        }))
+      );
 
       // ======================
-      // EMBEDDINGS
+      // EMBEDDINGS (FIXED)
       // ======================
-      const texts = chunks.map(c => c.text);
+      const texts = chunkDocs.map(c => c.text);
       const embeddings = await generateEmbeddings(texts);
 
       const ops = embeddings.map((vec, i) => ({
         updateOne: {
-          filter: { documentId, chunkId: chunks[i]._id },
+          filter: { documentId, chunkId: chunkDocs[i]._id },
           update: {
             $set: {
               documentId,
-              chunkId: chunks[i]._id,
+              chunkId: chunkDocs[i]._id,
               embedding: vec,
-              pageNo: chunks[i].pageNo
+              pageNo: chunkDocs[i].pageNo
             }
           },
           upsert: true
@@ -560,7 +559,7 @@ const worker = new Worker(
       console.log('✅ Done:', documentId);
 
     } catch (err) {
-      console.error('❌ Error:', err);
+      console.error('❌ Error:', err.message);
 
       await Document.findByIdAndUpdate(documentId, {
         status: 'error',
