@@ -284,7 +284,7 @@ const storage = new CloudinaryStorage({
   params: {
     folder: 'documents',
     resource_type: 'auto', // 🔥 PDFs support
-    public_id: (req, file) => Date.now() + '-' + file.originalname
+    access_mode: "public"
   }
 });
 
