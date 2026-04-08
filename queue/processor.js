@@ -443,6 +443,7 @@ try {
 // 🔥 REDIS CONNECTION (FIXED)
 // ==============================
 const connection = new IORedis(process.env.REDIS_URL, {
+  tls: {},
   maxRetriesPerRequest: null,
   enableReadyCheck: false
 });
@@ -517,8 +518,16 @@ const worker = new Worker(
       // ======================
       await Chunk.deleteMany({ documentId });
 
+      const filteredPages = textPerPage
+        .map(t => (t || "").trim())
+        .filter(t => t.length > 0);
+
+      if (filteredPages.length === 0) {
+        throw new Error("OCR returned empty text");
+      }
+
       const chunkDocs = await Chunk.insertMany(
-        textPerPage.map((text, i) => ({
+        filteredPages.map((text, i) => ({
           documentId,
           chunkIndex: i,
           text,

@@ -283,7 +283,7 @@ const storage = new CloudinaryStorage({
   cloudinary,
   params: {
     folder: 'documents',
-    resource_type: 'raw', // 🔥 PDFs support
+    resource_type: 'auto', // 🔥 PDFs support
     public_id: (req, file) => Date.now() + '-' + file.originalname
   }
 });
