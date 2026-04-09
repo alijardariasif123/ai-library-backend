@@ -314,6 +314,8 @@ router.post('/upload', authMiddleware, upload.single('file'), async (req, res) =
       folder: "documents",
       resource_type: req.file.mimetype === 'application/pdf' ? 'raw' : 'image',
       type: "upload",
+      // 🔥 THIS IS THE REAL FIX
+      access_mode: "public",
       // 🔥 ADD THIS (CRITICAL FIX)
       format: req.file.mimetype === 'application/pdf' ? 'pdf' : undefined
     });
