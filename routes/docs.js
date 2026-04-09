@@ -281,10 +281,19 @@ cloudinary.config({
 // ==============================
 const storage = new CloudinaryStorage({
   cloudinary,
-  params: {
-    folder: 'documents',
-    resource_type: 'auto', // 🔥 PDFs support
-    access_mode: "public"
+  params: async (req, file) => {
+    return {
+      folder: 'documents',
+
+      // 🔥 IMPORTANT: PDF → raw
+      resource_type: file.mimetype === 'application/pdf' ? 'raw' : 'image',
+
+      // 🔥 FORCE PUBLIC DELIVERY
+      type: 'upload',
+
+      // optional but good
+      public_id: `${Date.now()}-${file.originalname}`
+    };
   }
 });
 
