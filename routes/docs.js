@@ -318,7 +318,14 @@ router.post('/upload', authMiddleware, upload.single('file'), async (req, res) =
       format: req.file.mimetype === 'application/pdf' ? 'pdf' : undefined
     });
 
-    const fileUrl = result.secure_url;
+    const fileUrl = cloudinary.url(result.public_id, {
+      resource_type: "raw",
+      type: "upload",
+      sign_url: true,
+      secure: true
+    });
+
+    console.log("✅ SIGNED URL:", fileUrl);
 
     console.log("✅ FINAL FILE URL:", fileUrl);
 
