@@ -258,8 +258,8 @@
 
 const express = require('express');
 const multer = require('multer');
-const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const cloudinary = require('cloudinary').v2;
+const fs = require('fs');
 
 const { authMiddleware } = require('../middleware/auth');
 const Document = require('../models/Document');
@@ -277,28 +277,10 @@ cloudinary.config({
 });
 
 // ==============================
-// MULTER (CLOUD STORAGE)
+// MULTER (LOCAL TEMP STORAGE)
 // ==============================
-const storage = new CloudinaryStorage({
-  cloudinary,
-  params: async (req, file) => {
-    return {
-      folder: 'documents',
-
-      // 🔥 IMPORTANT: PDF → raw
-      resource_type: file.mimetype === 'application/pdf' ? 'raw' : 'image',
-
-      // 🔥 FORCE PUBLIC DELIVERY
-      type: 'upload',
-
-      // optional but good
-      public_id: `${Date.now()}-${file.originalname}`
-    };
-  }
-});
-
 const upload = multer({
-  storage,
+  dest: 'uploads/', // 🔥 temp storage
   limits: {
     fileSize: parseInt(process.env.MAX_UPLOAD_SIZE || String(50 * 1024 * 1024), 10)
   },
@@ -323,11 +305,25 @@ router.post('/upload', authMiddleware, upload.single('file'), async (req, res) =
         message: 'No file uploaded.'
       });
     }
+
     console.log("📩 Upload route hit");
     console.log("FILE DATA:", req.file);
-    
-    // ✅ Cloudinary URL
-    const fileUrl = req.file.path;
+
+    // 🔥 Upload to Cloudinary manually (FINAL FIX)
+    const result = await cloudinary.uploader.upload(req.file.path, {
+      folder: "documents",
+      resource_type: req.file.mimetype === 'application/pdf' ? 'raw' : 'image',
+      type: "upload"
+    });
+
+    const fileUrl = result.secure_url;
+
+    console.log("✅ FINAL FILE URL:", fileUrl);
+
+    // 🧹 delete local temp file
+    fs.unlink(req.file.path, (err) => {
+      if (err) console.error("Temp file delete error:", err);
+    });
 
     // Save document
     const newDoc = await Document.create({
@@ -435,8 +431,6 @@ router.delete('/:id', authMiddleware, async (req, res) => {
         message: 'Not found'
       });
     }
-
-    // optional: later cloudinary delete
 
     res.json({
       success: true,
