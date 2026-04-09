@@ -305,7 +305,7 @@ router.post('/upload', authMiddleware, upload.single('file'), async (req, res) =
         message: 'No file uploaded.'
       });
     }
-
+    console.log("hi");
     console.log("📩 Upload route hit");
     console.log("FILE DATA:", req.file);
 
