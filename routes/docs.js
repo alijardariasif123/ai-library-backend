@@ -313,7 +313,9 @@ router.post('/upload', authMiddleware, upload.single('file'), async (req, res) =
     const result = await cloudinary.uploader.upload(req.file.path, {
       folder: "documents",
       resource_type: req.file.mimetype === 'application/pdf' ? 'raw' : 'image',
-      type: "upload"
+      type: "upload",
+      // 🔥 ADD THIS (CRITICAL FIX)
+      format: req.file.mimetype === 'application/pdf' ? 'pdf' : undefined
     });
 
     const fileUrl = result.secure_url;
