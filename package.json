@@ -26,6 +26,7 @@
     "license": "MIT",
     "dependencies": {
         "@openrouter/sdk": "^0.2.9",
+        "@supabase/supabase-js": "^2.103.0",
         "axios": "^1.13.2",
         "bcrypt": "^5.1.1",
         "bcryptjs": "^3.0.3",
