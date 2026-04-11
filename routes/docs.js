@@ -1,12 +1,7 @@
-// // File: backend/routes/docs.js
-// // Routes for document upload, listing, status, and deletion
-// // Improved: safer multer handling, MIME basic validation, robust queueing, async file ops.
-
 // const express = require('express');
 // const multer = require('multer');
-// const path = require('path');
-// const fs = require('fs').promises;
-// const fsSync = require('fs');
+// const cloudinary = require('cloudinary').v2;
+// const fs = require('fs');
 
 // const { authMiddleware } = require('../middleware/auth');
 // const Document = require('../models/Document');
@@ -14,78 +9,37 @@
 
 // const router = express.Router();
 
-// // Config via env (sensible defaults)
-// const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, '..', 'uploads');
-// const MAX_UPLOAD_SIZE = parseInt(process.env.MAX_UPLOAD_SIZE || String(50 * 1024 * 1024), 10); // default 50MB
-// const ALLOWED_MIMETYPES = (process.env.ALLOWED_MIMETYPES || 'application/pdf,image/png,image/jpeg').split(',');
-
-// // ensure upload dir exists (sync during startup)
-// if (!fsSync.existsSync(UPLOAD_DIR)) {
-//   fsSync.mkdirSync(UPLOAD_DIR, { recursive: true });
-// }
-
-// // Multer storage
-// const storage = multer.diskStorage({
-//   destination: function (req, file, cb) {
-//     cb(null, UPLOAD_DIR);
-//   },
-//   filename: function (req, file, cb) {
-//     // Keep original extension but generate safe unique name
-//     const ext = path.extname(file.originalname).toLowerCase();
-//     const safeBase = Date.now() + '-' + Math.round(Math.random() * 1e9);
-//     cb(null, safeBase + ext);
-//   }
+// // ==============================
+// // CLOUDINARY CONFIG
+// // ==============================
+// cloudinary.config({
+//   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+//   api_key: process.env.CLOUDINARY_API_KEY,
+//   api_secret: process.env.CLOUDINARY_API_SECRET
 // });
 
+// // ==============================
+// // MULTER (LOCAL TEMP STORAGE)
+// // ==============================
 // const upload = multer({
-//   storage,
+//   dest: 'uploads/', // 🔥 temp storage
 //   limits: {
-//     fileSize: MAX_UPLOAD_SIZE
+//     fileSize: parseInt(process.env.MAX_UPLOAD_SIZE || String(50 * 1024 * 1024), 10)
 //   },
-//   fileFilter: function (req, file, cb) {
-//     // basic MIME check (not bulletproof, but reduces bad uploads)
-//     if (ALLOWED_MIMETYPES.includes(file.mimetype)) {
-//       return cb(null, true);
+//   fileFilter: (req, file, cb) => {
+//     const allowed = ['application/pdf', 'image/png', 'image/jpeg'];
+//     if (allowed.includes(file.mimetype)) {
+//       cb(null, true);
+//     } else {
+//       cb(new Error('Invalid file type'));
 //     }
-//     const err = new Error('Invalid file type');
-//     err.code = 'INVALID_MIME';
-//     return cb(err);
 //   }
 // });
 
-// // Middleware wrapper to handle multer errors gracefully
-// function multerHandler(fieldName) {
-//   return (req, res, next) => {
-//     const handler = upload.single(fieldName);
-//     handler(req, res, (err) => {
-//       if (err) {
-//         console.error('Multer upload error:', err);
-//         if (err.code === 'LIMIT_FILE_SIZE') {
-//           return res.status(413).json({ success: false, message: 'File too large.' });
-//         }
-//         if (err.code === 'INVALID_MIME') {
-//           return res.status(400).json({ success: false, message: 'Invalid file type.' });
-//         }
-//         return res.status(400).json({ success: false, message: 'File upload failed.' });
-//       }
-//       next();
-//     });
-//   };
-// }
-
-// // Utility: return a safe doc object for responses
-// function safeDocumentPayload(doc) {
-//   if (!doc) return null;
-//   const plain = typeof doc.toObject === 'function' ? doc.toObject() : doc;
-//   // remove any fields you don't want to send back (none sensitive here)
-//   return plain;
-// }
-
 // // ==============================
-// // POST /api/docs/upload
-// // Upload a new document and push to OCR queue
+// // POST /upload
 // // ==============================
-// router.post('/upload', authMiddleware, multerHandler('file'), async (req, res) => {
+// router.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
 //   try {
 //     if (!req.file) {
 //       return res.status(400).json({
@@ -93,90 +47,101 @@
 //         message: 'No file uploaded.'
 //       });
 //     }
+//     console.log("hi");
+//     console.log("📩 Upload route hit");
+//     console.log("FILE DATA:", req.file);
 
-//    // 🔥 Build public file URL (VERY IMPORTANT)
-// const fileUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
-
-// // Persist document record
-// const newDoc = await Document.create({
-//   userId: req.user._id,
-//   filename: req.file.originalname,
-//   filePath: path.resolve(req.file.path), // local backup (optional)
-//   fileUrl: fileUrl, // 🔥 NEW (important for worker)
-//   mimeType: req.file.mimetype,
-//   size: req.file.size,
-//   status: 'processing'
-// });
-
-// // Push job to BullMQ OCR queue — handle queue errors gracefully
-// try {
-//   // 🔥 send fileUrl instead of filePath
-//   await addDocumentProcessingJob(newDoc._id.toString(), fileUrl);
-
-// } catch (queueErr) {
-//   console.error('Failed to enqueue OCR job:', queueErr);
-
-//   await Document.findByIdAndUpdate(newDoc._id, {
-//     status: 'error',
-//     errorMessage: 'Failed to enqueue OCR job'
-//   }).exec();
-
-//   return res.status(500).json({
-//     success: false,
-//     message: 'Uploaded but failed to start processing. Admin will be notified.'
-//   });
-// }
-//     return res.status(201).json({
-//       success: true,
-//       message: 'Document uploaded successfully. Processing started.',
-//       document: safeDocumentPayload(newDoc)
+//     // 🔥 Upload to Cloudinary manually (FINAL FIX)
+//     const result = await cloudinary.uploader.upload(req.file.path, {
+//       folder: "documents",
+//       resource_type: "image",
+//       type: "upload",
+//       // 🔥 THIS IS THE REAL FIX
+//       access_mode: "public",
+//       // 🔥 ADD THIS (CRITICAL FIX)
+//       format: req.file.mimetype === 'application/pdf' ? 'pdf' : undefined
 //     });
+
+//     const fileUrl = cloudinary.url(result.public_id, {
+//       resource_type: "image",
+//       type: "upload",
+//       sign_url: true,
+//       secure: true
+//     });
+
+//     console.log("✅ SIGNED URL:", fileUrl);
+
+//     console.log("✅ FINAL FILE URL:", fileUrl);
+
+//     // 🧹 delete local temp file
+//     fs.unlink(req.file.path, (err) => {
+//       if (err) console.error("Temp file delete error:", err);
+//     });
+
+//     // Save document
+//     const newDoc = await Document.create({
+//       userId: req.user._id,
+//       filename: req.file.originalname,
+//       fileUrl: fileUrl,
+//       mimeType: req.file.mimetype,
+//       size: req.file.size,
+//       status: 'processing'
+//     });
+
+//     // Queue job
+//     try {
+//       await addDocumentProcessingJob(newDoc._id.toString(), fileUrl);
+//     } catch (queueErr) {
+//       console.error('Queue error:', queueErr);
+
+//       await Document.findByIdAndUpdate(newDoc._id, {
+//         status: 'error',
+//         errorMessage: 'Queue failed'
+//       });
+
+//       return res.status(500).json({
+//         success: false,
+//         message: 'Upload done but processing failed.'
+//       });
+//     }
+
+//     res.status(201).json({
+//       success: true,
+//       message: 'Uploaded & processing started',
+//       document: newDoc
+//     });
+
 //   } catch (err) {
 //     console.error('Upload error:', err);
 
-//     // If multer wrote file but DB failed, try to cleanup file asynchronously
-//     if (req.file && req.file.path) {
-//       try {
-//         await fs.unlink(path.resolve(req.file.path));
-//       } catch (e) {
-//         console.warn('Failed to cleanup uploaded file after DB error:', e);
-//       }
-//     }
-
-//     return res.status(500).json({
+//     res.status(500).json({
 //       success: false,
-//       message: 'Failed to upload document.'
+//       message: 'Upload failed'
 //     });
 //   }
 // });
 
 // // ==============================
-// // GET /api/docs
-// // List all documents for logged-in user
+// // GET all docs
 // // ==============================
 // router.get('/', authMiddleware, async (req, res) => {
 //   try {
 //     const docs = await Document.find({ userId: req.user._id })
 //       .sort({ createdAt: -1 })
-//       .lean()
-//       .exec();
+//       .lean();
 
-//     return res.status(200).json({
+//     res.json({
 //       success: true,
 //       documents: docs
 //     });
 //   } catch (err) {
-//     console.error('List docs error:', err);
-//     return res.status(500).json({
-//       success: false,
-//       message: 'Failed to fetch documents.'
-//     });
+//     console.error(err);
+//     res.status(500).json({ success: false });
 //   }
 // });
 
 // // ==============================
-// // GET /api/docs/:id
-// // Get single document details
+// // GET single doc
 // // ==============================
 // router.get('/:id', authMiddleware, async (req, res) => {
 //   try {
@@ -188,78 +153,56 @@
 //     if (!doc) {
 //       return res.status(404).json({
 //         success: false,
-//         message: 'Document not found.'
+//         message: 'Not found'
 //       });
 //     }
 
-//     return res.status(200).json({
+//     res.json({
 //       success: true,
 //       document: doc
 //     });
+
 //   } catch (err) {
-//     console.error('Get doc error:', err);
-//     return res.status(500).json({
-//       success: false,
-//       message: 'Failed to fetch document.'
-//     });
+//     console.error(err);
+//     res.status(500).json({ success: false });
 //   }
 // });
 
 // // ==============================
-// // DELETE /api/docs/:id
-// // Delete document + file
+// // DELETE doc
 // // ==============================
 // router.delete('/:id', authMiddleware, async (req, res) => {
 //   try {
 //     const doc = await Document.findOneAndDelete({
 //       _id: req.params.id,
 //       userId: req.user._id
-//     }).exec();
+//     });
 
 //     if (!doc) {
 //       return res.status(404).json({
 //         success: false,
-//         message: 'Document not found.'
+//         message: 'Not found'
 //       });
 //     }
 
-//     // Delete file from disk asynchronously (don't block response)
-//     if (doc.filePath) {
-//       (async () => {
-//         try {
-//           const fp = path.resolve(doc.filePath);
-//           if (fsSync.existsSync(fp)) {
-//             await fs.unlink(fp);
-//             console.log('Deleted file:', fp);
-//           }
-//         } catch (e) {
-//           console.warn('Failed deleting file for document', doc._id, e);
-//         }
-//       })();
-//     }
-
-//     return res.status(200).json({
+//     res.json({
 //       success: true,
-//       message: 'Document deleted successfully.'
+//       message: 'Deleted'
 //     });
+
 //   } catch (err) {
-//     console.error('Delete doc error:', err);
-//     return res.status(500).json({
-//       success: false,
-//       message: 'Failed to delete document.'
-//     });
+//     console.error(err);
+//     res.status(500).json({ success: false });
 //   }
 // });
 
 // module.exports = router;
 
-
-// File: backend/routes/docs.js
-
 const express = require('express');
 const multer = require('multer');
-const cloudinary = require('cloudinary').v2;
 const fs = require('fs');
+
+const supabase = require('../utils/supabase'); // ✅ NEW
 
 const { authMiddleware } = require('../middleware/auth');
 const Document = require('../models/Document');
@@ -268,19 +211,10 @@ const { addDocumentProcessingJob } = require('../queue/processor');
 const router = express.Router();
 
 // ==============================
-// CLOUDINARY CONFIG
-// ==============================
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET
-});
-
-// ==============================
 // MULTER (LOCAL TEMP STORAGE)
 // ==============================
 const upload = multer({
-  dest: 'uploads/', // 🔥 temp storage
+  dest: 'uploads/',
   limits: {
     fileSize: parseInt(process.env.MAX_UPLOAD_SIZE || String(50 * 1024 * 1024), 10)
   },
@@ -305,48 +239,53 @@ router.post('/upload', authMiddleware, upload.single('file'), async (req, res) =
         message: 'No file uploaded.'
       });
     }
-    console.log("hi");
+
     console.log("📩 Upload route hit");
     console.log("FILE DATA:", req.file);
 
-    // 🔥 Upload to Cloudinary manually (FINAL FIX)
-    const result = await cloudinary.uploader.upload(req.file.path, {
-      folder: "documents",
-      resource_type: "image",
-      type: "upload",
-      // 🔥 THIS IS THE REAL FIX
-      access_mode: "public",
-      // 🔥 ADD THIS (CRITICAL FIX)
-      format: req.file.mimetype === 'application/pdf' ? 'pdf' : undefined
-    });
+    // ======================
+    // 🔥 SUPABASE UPLOAD
+    // ======================
+    const fileBuffer = fs.readFileSync(req.file.path);
+    const fileName = `${Date.now()}-${req.file.originalname}`;
 
-    const fileUrl = cloudinary.url(result.public_id, {
-      resource_type: "image",
-      type: "upload",
-      sign_url: true,
-      secure: true
-    });
+    const { error } = await supabase.storage
+      .from('documents')
+      .upload(fileName, fileBuffer, {
+        contentType: req.file.mimetype
+      });
 
-    console.log("✅ SIGNED URL:", fileUrl);
+    if (error) {
+      throw error;
+    }
 
-    console.log("✅ FINAL FILE URL:", fileUrl);
+    // ✅ PUBLIC URL
+    const { data: publicData } = supabase.storage
+      .from('documents')
+      .getPublicUrl(fileName);
 
-    // 🧹 delete local temp file
-    fs.unlink(req.file.path, (err) => {
-      if (err) console.error("Temp file delete error:", err);
-    });
+    const fileUrl = publicData.publicUrl;
 
-    // Save document
+    console.log("✅ SUPABASE URL:", fileUrl);
+
+    // 🧹 delete temp file
+    fs.unlink(req.file.path, () => {});
+
+    // ======================
+    // SAVE DOCUMENT
+    // ======================
     const newDoc = await Document.create({
       userId: req.user._id,
       filename: req.file.originalname,
-      fileUrl: fileUrl,
+      fileUrl,
       mimeType: req.file.mimetype,
       size: req.file.size,
       status: 'processing'
     });
 
-    // Queue job
+    // ======================
+    // QUEUE JOB
+    // ======================
     try {
       await addDocumentProcessingJob(newDoc._id.toString(), fileUrl);
     } catch (queueErr) {
@@ -363,7 +302,7 @@ router.post('/upload', authMiddleware, upload.single('file'), async (req, res) =
       });
     }
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       message: 'Uploaded & processing started',
       document: newDoc
@@ -372,7 +311,7 @@ router.post('/upload', authMiddleware, upload.single('file'), async (req, res) =
   } catch (err) {
     console.error('Upload error:', err);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: 'Upload failed'
     });

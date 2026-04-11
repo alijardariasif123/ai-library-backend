@@ -169,11 +169,18 @@ router.post('/reprocess/:documentId', async (req, res) => {
     // enqueue job
     let job;
     try {
-      job = await addDocumentProcessingJob(documentId.toString(), doc.filePath);
+      job = await addDocumentProcessingJob(
+        documentId.toString(),
+        doc.fileUrl // 🔥 FIXED (was filePath ❌)
+      );
     } catch (queueErr) {
       console.error('Failed to enqueue reprocess job:', queueErr && queueErr.stack ? queueErr.stack : queueErr);
-      // roll back document status to error so admin can see something happened
-      await Document.findByIdAndUpdate(documentId, { status: 'error', errorMessage: 'Failed to enqueue reprocess job' }).exec();
+
+      await Document.findByIdAndUpdate(documentId, {
+        status: 'error',
+        errorMessage: 'Failed to enqueue reprocess job'
+      }).exec();
+
       return res.status(500).json({
         success: false,
         message: 'Failed to start reprocessing (queue error).'

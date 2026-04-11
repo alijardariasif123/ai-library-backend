@@ -133,15 +133,19 @@ async function querySimilarChunks(documentId, queryEmbedding, topK = 5) {
   }
 
   // Stream through embeddings and keep topK
-  const cursor = Embedding.find({ documentId }).lean().cursor();
+  const cursor = Embedding.find({ documentId })
+    .hint({ documentId: 1 }) // 🔥 performance boost
+    .lean()
+    .cursor();
 
   const top = []; // ascending by score (smallest first)
   const qVec = queryEmbedding;
 
   for await (const emb of cursor) {
     if (!emb || !Array.isArray(emb.embedding)) continue;
+
     if (emb.embedding.length !== qVec.length) {
-      // If lengths don't match, skip (or you could normalize/pad)
+      console.warn('Embedding length mismatch skipped');
       continue;
     }
 

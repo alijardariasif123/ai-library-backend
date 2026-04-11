@@ -1,178 +1,11 @@
-// // // File: backend/routes/worker.js
-// // // Worker diagnostics + optional async OCR callback.
-// // // Fully improved & made consistent with queue/processor.js pipeline.
-
-// // const express = require('express');
-// // const router = express.Router();
-
-// // const Document = require('../models/Document');
-// // const Chunk = require('../models/Chunk');
-// // const Embedding = require('../models/Embedding');
-
-// // const { splitIntoChunks } = require('../services/chunking');
-// // const { generateEmbeddings } = require('../services/gemini');
-
-// // let upsertVectorStore = null;
-// // try {
-// //     ({ upsertEmbeddings: upsertVectorStore } = require('../services/vectorStore'));
-// // } catch (e) {
-// //     upsertVectorStore = null;
-// //     console.warn("vectorStore.upsertEmbeddings not available in worker route.");
-// // }
-
-// // const WORKER_URL = process.env.WORKER_URL || 'http://worker:5001';
-
-// // // ==============================
-// // // GET /api/worker/health
-// // // ==============================
-// // router.get('/health', (req, res) => {
-// //     return res.status(200).json({
-// //         success: true,
-// //         message: 'Worker route active',
-// //         workerUrl: WORKER_URL
-// //     });
-// // });
-
-// // // ==============================
-// // // INTERNAL HELPER — safe pipeline
-// // // ==============================
-// // async function processOCRCallback(documentId, pages, textPerPage) {
-// //     // 1) Document must exist
-// //     const doc = await Document.findById(documentId);
-// //     if (!doc) throw new Error(`Document ${documentId} not found`);
-
-// //     // 2) Optional: only allow callback when status != ready
-// //     if (doc.status === 'ready') {
-// //         console.warn(`⚠️ Callback received for a document already marked ready: ${documentId}`);
-// //         // You may choose to ignore or reprocess; here we ignore to avoid duplication.
-// //         return { skipped: true };
-// //     }
-
-// //     // 3) Clean existing old chunks/embeddings (safe)
-// //     await Chunk.deleteMany({ documentId });
-// //     await Embedding.deleteMany({ documentId });
-
-// //     // 4) Merge text
-// //     const fullText = textPerPage.join('\n');
-
-// //     // 5) Chunk
-// //     const CHUNK_SIZE = parseInt(process.env.CHUNK_SIZE || "800", 10);
-// //     const CHUNK_OVERLAP = parseInt(process.env.CHUNK_OVERLAP || "200", 10);
-
-// //     const chunks = splitIntoChunks(fullText, CHUNK_SIZE, CHUNK_OVERLAP);
-// //     if (!chunks.length) throw new Error("Chunking produced 0 chunks");
-
-// //     // 6) Embeddings
-// //     const embeddings = await generateEmbeddings(chunks);
-// //     if (!Array.isArray(embeddings) || embeddings.length !== chunks.length) {
-// //         throw new Error(
-// //             `Embedding mismatch. Expected=${chunks.length}, got=${embeddings.length}`
-// //         );
-// //     }
-
-// //     // 7) Save chunks + embeddings
-// //     const operationsChunks = [];
-// //     const operationsEmbeddings = [];
-
-// //     for (let i = 0; i < chunks.length; i++) {
-// //         const pageNo = Math.floor((i * (pages || 1)) / chunks.length) + 1;
-
-// //         operationsChunks.push({
-// //             insertOne: {
-// //                 documentId,
-// //                 chunkIndex: i,
-// //                 text: chunks[i],
-// //                 pageNo
-// //             }
-// //         });
-// //     }
-
-// //     // Insert chunks in bulk
-// //     const chunkDocs = await Chunk.insertMany(
-// //         operationsChunks.map(c => c.insertOne),
-// //         { ordered: false }
-// //     );
-
-// //     // Build embedding docs in bulk
-// //     for (let i = 0; i < chunks.length; i++) {
-// //         const chunkDoc = chunkDocs[i];
-// //         const pageNo = Math.floor((i * (pages || 1)) / chunks.length) + 1;
-
-// //         operationsEmbeddings.push({
-// //             documentId,
-// //             chunkId: chunkDoc._id,
-// //             embedding: embeddings[i],
-// //             pageNo
-// //         });
-// //     }
-
-// //     await Embedding.insertMany(operationsEmbeddings, { ordered: false });
-
-// //     // 8) Vector store upsert (if service available)
-// //     if (typeof upsertVectorStore === 'function') {
-// //         try {
-// //             const payload = operationsEmbeddings.map((emb, i) => ({
-// //                 documentId,
-// //                 chunkId: chunkDocs[i]._id,
-// //                 embedding: emb.embedding,
-// //                 metadata: { pageNo: emb.pageNo, chunkIndex: i }
-// //             }));
-// //             await upsertVectorStore(payload);
-// //         } catch (err) {
-// //             console.warn("vectorStore.upsertEmbeddings failed:", err.message || err);
-// //         }
-// //     }
-
-// //     // 9) Mark ready
-// //     await Document.findByIdAndUpdate(documentId, {
-// //         status: 'ready',
-// //         pages: pages || textPerPage.length,
-// //         errorMessage: null
-// //     });
-
-// //     return { success: true };
-// // }
-
-// // // ==============================
-// // // POST /api/worker/callback
-// // // ==============================
-// // router.post('/callback', async (req, res) => {
-// //     try {
-// //         const { documentId, pages, textPerPage } = req.body || {};
-
-// //         if (!documentId || !Array.isArray(textPerPage)) {
-// //             return res.status(400).json({
-// //                 success: false,
-// //                 message: "documentId and textPerPage[] are required."
-// //             });
-// //         }
-
-// //         const result = await processOCRCallback(documentId, pages, textPerPage);
-
-// //         return res.status(200).json({
-// //             success: true,
-// //             ...result,
-// //             message: "OCR callback processed successfully."
-// //         });
-
-// //     } catch (error) {
-// //         console.error("Worker callback error:", error.message || error);
-
-// //         return res.status(500).json({
-// //             success: false,
-// //             message: "Failed to process OCR callback.",
-// //             error: error.message
-// //         });
-// //     }
-// // });
-
-// // module.exports = router;
-// // File: backend/routes/worker.js
-
 // const express = require('express');
 // const router = express.Router();
 
+// // ==============================
+// // ENV CONFIG
+// // ==============================
 // const WORKER_URL = process.env.WORKER_URL || 'NOT_SET';
+// const REDIS_URL = process.env.REDIS_URL || 'NOT_SET';
 
 // // ==============================
 // // GET /api/worker/health
@@ -180,26 +13,77 @@
 // router.get('/health', (req, res) => {
 //     return res.status(200).json({
 //         success: true,
-//         message: 'Worker route active',
+//         message: 'Worker route active ✅',
 //         workerUrl: WORKER_URL,
-//         note: 'Callback disabled (using BullMQ worker pipeline)'
+//         redis: REDIS_URL !== 'NOT_SET' ? 'configured' : 'NOT SET ❌',
+//         mode: 'BullMQ worker pipeline',
+//         note: 'Processing happens in worker service (not via callback)'
 //     });
 // });
 
-// // ❌ CALLBACK DISABLED (IMPORTANT)
+// // ==============================
+// // 🔥 DEBUG: QUEUE STATUS
+// // ==============================
+// router.get('/debug', async (req, res) => {
+//     try {
+//         const { Queue } = require('bullmq');
+
+//         const queue = new Queue('document-processing', {
+//             connection: {
+//                 url: process.env.REDIS_URL
+//             }
+//         });
+
+//         const counts = await queue.getJobCounts();
+
+//         return res.status(200).json({
+//             success: true,
+//             queue: 'document-processing',
+//             counts
+//         });
+
+//     } catch (err) {
+//         console.error('Queue debug error:', err);
+
+//         return res.status(500).json({
+//             success: false,
+//             message: 'Failed to fetch queue status',
+//             error: err.message
+//         });
+//     }
+// });
+
+// // ==============================
+// // ❌ CALLBACK DISABLED
+// // ==============================
 // router.post('/callback', (req, res) => {
 //     return res.status(410).json({
 //         success: false,
-//         message: 'Callback route disabled. Use queue worker instead.'
+//         message: 'Callback disabled ❌',
+//         solution: 'Use BullMQ worker (queue processor)'
+//     });
+// });
+
+// // ==============================
+// // ROOT ROUTE (optional)
+// // ==============================
+// router.get('/', (req, res) => {
+//     return res.json({
+//         success: true,
+//         message: 'Worker API is running 🚀',
+//         routes: [
+//             '/health',
+//             '/debug'
+//         ]
 //     });
 // });
 
 // module.exports = router;
-
-// File: backend/routes/worker.js
-
 const express = require('express');
 const router = express.Router();
+
+const { Queue } = require('bullmq');
+const IORedis = require('ioredis');
 
 // ==============================
 // ENV CONFIG
@@ -208,74 +92,80 @@ const WORKER_URL = process.env.WORKER_URL || 'NOT_SET';
 const REDIS_URL = process.env.REDIS_URL || 'NOT_SET';
 
 // ==============================
+// 🔥 REDIS CONNECTION (STABLE)
+// ==============================
+const connection = new IORedis(process.env.REDIS_URL, {
+  tls: {},
+  maxRetriesPerRequest: null,
+  enableReadyCheck: false
+});
+
+// ==============================
+// QUEUE INSTANCE (REUSED)
+// ==============================
+const queue = new Queue('document-processing', { connection });
+
+// ==============================
 // GET /api/worker/health
 // ==============================
 router.get('/health', (req, res) => {
-    return res.status(200).json({
-        success: true,
-        message: 'Worker route active ✅',
-        workerUrl: WORKER_URL,
-        redis: REDIS_URL !== 'NOT_SET' ? 'configured' : 'NOT SET ❌',
-        mode: 'BullMQ worker pipeline',
-        note: 'Processing happens in worker service (not via callback)'
-    });
+  return res.status(200).json({
+    success: true,
+    message: 'Worker route active ✅',
+    workerUrl: WORKER_URL,
+    redis: REDIS_URL !== 'NOT_SET' ? 'configured' : 'NOT SET ❌',
+    mode: 'BullMQ worker pipeline',
+    note: 'Processing happens in worker service (not via callback)'
+  });
 });
 
 // ==============================
 // 🔥 DEBUG: QUEUE STATUS
 // ==============================
 router.get('/debug', async (req, res) => {
-    try {
-        const { Queue } = require('bullmq');
+  try {
+    const counts = await queue.getJobCounts();
 
-        const queue = new Queue('document-processing', {
-            connection: {
-                url: process.env.REDIS_URL
-            }
-        });
+    return res.status(200).json({
+      success: true,
+      queue: 'document-processing',
+      counts
+    });
 
-        const counts = await queue.getJobCounts();
+  } catch (err) {
+    console.error('Queue debug error:', err);
 
-        return res.status(200).json({
-            success: true,
-            queue: 'document-processing',
-            counts
-        });
-
-    } catch (err) {
-        console.error('Queue debug error:', err);
-
-        return res.status(500).json({
-            success: false,
-            message: 'Failed to fetch queue status',
-            error: err.message
-        });
-    }
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch queue status',
+      error: err.message
+    });
+  }
 });
 
 // ==============================
 // ❌ CALLBACK DISABLED
 // ==============================
 router.post('/callback', (req, res) => {
-    return res.status(410).json({
-        success: false,
-        message: 'Callback disabled ❌',
-        solution: 'Use BullMQ worker (queue processor)'
-    });
+  return res.status(410).json({
+    success: false,
+    message: 'Callback disabled ❌',
+    solution: 'Use BullMQ worker (queue processor)'
+  });
 });
 
 // ==============================
-// ROOT ROUTE (optional)
+// ROOT ROUTE
 // ==============================
 router.get('/', (req, res) => {
-    return res.json({
-        success: true,
-        message: 'Worker API is running 🚀',
-        routes: [
-            '/health',
-            '/debug'
-        ]
-    });
+  return res.json({
+    success: true,
+    message: 'Worker API is running 🚀',
+    routes: [
+      '/health',
+      '/debug'
+    ]
+  });
 });
 
 module.exports = router;

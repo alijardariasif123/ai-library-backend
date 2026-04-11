@@ -1,32 +1,23 @@
-// // backend/app.js
-// // Main Express app configuration for Study Assistant AI
-// // - Global middlewares
-// // - API routes
-// // - Security
-// // - Error handling
-
 // const express = require('express');
 // const cors = require('cors');
 // const cookieParser = require('cookie-parser');
-// const path = require('path');
 
 // const { authMiddleware } = require('./middleware/auth');
 
 // const app = express();
 
-// app.use('/uploads', express.static('uploads'));
-
 // // ==============================
 // // ✅ CORS (explicit & safe)
 // // ==============================
 // const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
+
 // app.use(cors({
 //   origin: FRONTEND_URL,
 //   credentials: true,
 //   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
 //   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
 // }));
-// // respond to preflight early
+
 // app.options('*', cors());
 
 // // ==============================
@@ -37,13 +28,14 @@
 // app.use(cookieParser());
 
 // // ==============================
-// // ✅ STATIC FILES (UPLOADED FILES)
+// // ✅ ROOT ROUTE (IMPORTANT FIX)
 // // ==============================
-// const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, 'uploads');
-// app.use('/uploads', express.static(UPLOAD_DIR));
+// app.get('/', (req, res) => {
+//   res.send('AI Library Worker API running 🚀');
+// });
 
 // // ==============================
-// // ✅ HEALTH CHECK ROUTE
+// // ✅ HEALTH CHECK
 // // ==============================
 // app.get('/health', (req, res) => {
 //   res.status(200).json({
@@ -55,15 +47,12 @@
 
 // // ==============================
 // // ✅ API ROUTES
-// // - Public routes first
 // // ==============================
 // app.use('/api/auth', require('./routes/auth'));
-// app.use('/api/docs', require('./routes/docs'));       // keep public if docs upload needs public access
+// app.use('/api/docs', require('./routes/docs'));
 
 // // ==============================
-// // ✅ Protected / Auth-required routes
-// // - Use authMiddleware on routes that must be protected
-// // - Note: routes can also apply middleware internally; this is a safe default
+// // ✅ PROTECTED ROUTES
 // // ==============================
 // app.use('/api/ai', authMiddleware, require('./routes/ai'));
 // app.use('/api/admin', authMiddleware, require('./routes/admin'));
@@ -71,9 +60,15 @@
 // app.use('/api/worker', authMiddleware, require('./routes/worker'));
 
 // // ==============================
+// // ❌ REMOVE LOCAL UPLOADS (Cloudinary use ho raha hai)
+// // ==============================
+// // app.use('/uploads', express.static('uploads'));
+// // app.use('/uploads', express.static(UPLOAD_DIR));
+
+// // ==============================
 // // ✅ 404 HANDLER
 // // ==============================
-// app.use((req, res, next) => {
+// app.use((req, res) => {
 //   res.status(404).json({
 //     success: false,
 //     message: 'API route not found ❌'
@@ -84,20 +79,16 @@
 // // ✅ GLOBAL ERROR HANDLER
 // // ==============================
 // app.use((err, req, res, next) => {
-//   console.error('🔥 GLOBAL ERROR:', err && err.stack ? err.stack : err);
+//   console.error('🔥 GLOBAL ERROR:', err?.stack || err);
 
 //   res.status(err.status || 500).json({
 //     success: false,
 //     message: err.message || 'Internal Server Error',
-//     // only show stack in development
 //     stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
 //   });
 // });
 
 // module.exports = app;
-
-
-// backend/app.js
 
 const express = require('express');
 const cors = require('cors');
@@ -108,12 +99,17 @@ const { authMiddleware } = require('./middleware/auth');
 const app = express();
 
 // ==============================
-// ✅ CORS (explicit & safe)
+// 🔥 TRUST PROXY (IMPORTANT)
+// ==============================
+app.set('trust proxy', 1);
+
+// ==============================
+// ✅ CORS
 // ==============================
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
 
 app.use(cors({
-  origin: FRONTEND_URL,
+  origin: [FRONTEND_URL],
   credentials: true,
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
@@ -124,24 +120,24 @@ app.options('*', cors());
 // ==============================
 // ✅ GLOBAL MIDDLEWARES
 // ==============================
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '20mb' })); // 🔥 increased
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
 // ==============================
-// ✅ ROOT ROUTE (IMPORTANT FIX)
+// ✅ ROOT
 // ==============================
 app.get('/', (req, res) => {
-  res.send('AI Library Worker API running 🚀');
+  res.send('AI Library Backend running 🚀');
 });
 
 // ==============================
-// ✅ HEALTH CHECK
+// ✅ HEALTH
 // ==============================
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'OK',
-    message: 'Study Assistant AI Backend is running smoothly ✅',
+    message: 'Backend running ✅',
     timestamp: new Date().toISOString()
   });
 });
@@ -153,21 +149,19 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/docs', require('./routes/docs'));
 
 // ==============================
-// ✅ PROTECTED ROUTES
+// 🔒 PROTECTED ROUTES
 // ==============================
 app.use('/api/ai', authMiddleware, require('./routes/ai'));
 app.use('/api/admin', authMiddleware, require('./routes/admin'));
-app.use('/api/payments', authMiddleware, require('./routes/payments'));
-app.use('/api/worker', authMiddleware, require('./routes/worker'));
 
 // ==============================
-// ❌ REMOVE LOCAL UPLOADS (Cloudinary use ho raha hai)
+// 🔥 PUBLIC ROUTES (IMPORTANT)
 // ==============================
-// app.use('/uploads', express.static('uploads'));
-// app.use('/uploads', express.static(UPLOAD_DIR));
+app.use('/api/payments', require('./routes/payments')); // webhook safe
+app.use('/api/worker', require('./routes/worker'));     // health/debug safe
 
 // ==============================
-// ✅ 404 HANDLER
+// 404
 // ==============================
 app.use((req, res) => {
   res.status(404).json({
@@ -177,7 +171,7 @@ app.use((req, res) => {
 });
 
 // ==============================
-// ✅ GLOBAL ERROR HANDLER
+// GLOBAL ERROR
 // ==============================
 app.use((err, req, res, next) => {
   console.error('🔥 GLOBAL ERROR:', err?.stack || err);
