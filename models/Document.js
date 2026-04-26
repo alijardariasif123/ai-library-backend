@@ -41,7 +41,7 @@ const documentSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ['uploaded', 'processing', 'ready', 'error'],
+      enum: ['uploaded','queued', 'processing', 'ready', 'error'],
       default: 'uploaded',
       index: true
     },
