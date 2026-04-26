@@ -3,7 +3,10 @@ const IORedis = require('ioredis');
 const axios = require('axios');
 const events = require('events');
 
-events.EventEmitter.defaultMaxListeners = Math.max(20, events.EventEmitter.defaultMaxListeners);
+events.EventEmitter.defaultMaxListeners = Math.max(
+  20,
+  events.EventEmitter.defaultMaxListeners
+);
 
 const Document = require('../models/Document');
 const Chunk = require('../models/Chunk');
@@ -19,25 +22,78 @@ try {
   console.warn('vectorStore not available');
 }
 
-// ==============================
-// 🔥 REDIS CONNECTION
-// ==============================
+/**
+ * ==============================
+ * CONFIG
+ * ==============================
+ */
+const QUEUE_NAME = process.env.DOC_QUEUE_NAME || 'document-processing';
+const WORKER_CONCURRENCY = parseInt(process.env.WORKER_CONCURRENCY || '1', 10);
+const OCR_TIMEOUT = parseInt(process.env.OCR_TIMEOUT || `${1000 * 60 * 10}`, 10);
+
+/**
+ * ==============================
+ * REDIS CONNECTION
+ * ==============================
+ */
 const connection = new IORedis(process.env.REDIS_URL, {
   tls: {},
   maxRetriesPerRequest: null,
   enableReadyCheck: false
 });
 
-// ==============================
-// QUEUE
-// ==============================
-const QUEUE_NAME = process.env.DOC_QUEUE_NAME || 'document-processing';
-
+/**
+ * ==============================
+ * QUEUE
+ * ==============================
+ */
 const documentQueue = new Queue(QUEUE_NAME, { connection });
 
-// ==============================
-// ADD JOB (RETRY ENABLED)
-// ==============================
+/**
+ * ==============================
+ * HELPERS
+ * ==============================
+ */
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function callOCR(documentId, fileUrl) {
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const response = await axios.post(
+        `${process.env.WORKER_URL}/process`,
+        { documentId, fileUrl },
+        { timeout: OCR_TIMEOUT }
+      );
+
+      return response;
+
+    } catch (err) {
+      const status = err?.response?.status;
+
+      console.warn(`OCR attempt ${attempt} failed`, status || err.message);
+
+      if (status === 429 && attempt < 3) {
+        await sleep(15000 * attempt);
+        continue;
+      }
+
+      if (!status && attempt < 3) {
+        await sleep(5000);
+        continue;
+      }
+
+      throw err;
+    }
+  }
+}
+
+/**
+ * ==============================
+ * ADD JOB
+ * ==============================
+ */
 async function addDocumentProcessingJob(documentId, fileUrl) {
   console.log('🚀 Adding job:', documentId);
 
@@ -45,18 +101,18 @@ async function addDocumentProcessingJob(documentId, fileUrl) {
     'process-document',
     { documentId, fileUrl },
     {
-      attempts: 3,
-      backoff: {
-        type: 'exponential',
-        delay: 5000
-      }
+      attempts: 1,
+      removeOnComplete: true,
+      removeOnFail: false
     }
   );
 }
 
-// ==============================
-// WORKER
-// ==============================
+/**
+ * ==============================
+ * WORKER
+ * ==============================
+ */
 const worker = new Worker(
   QUEUE_NAME,
   async (job) => {
@@ -78,21 +134,16 @@ const worker = new Worker(
         errorMessage: null
       });
 
-      // ======================
-      // 🔥 OCR CALL
-      // ======================
+      /**
+       * ======================
+       * OCR CALL
+       * ======================
+       */
       console.log('📡 Calling OCR:', fileUrl);
 
-      const ocrResponse = await axios.post(
-        `${process.env.WORKER_URL}/process`,
-        { documentId, fileUrl },
-        { timeout: 1000 * 60 * 10 }
-      );
+      const ocrResponse = await callOCR(documentId, fileUrl);
 
-      // ======================
-      // 🔒 SAFE RESPONSE CHECK
-      // ======================
-      if (!ocrResponse.data || !ocrResponse.data.success) {
+      if (!ocrResponse?.data?.success) {
         throw new Error('OCR service failed');
       }
 
@@ -102,9 +153,11 @@ const worker = new Worker(
         throw new Error('OCR returned empty or invalid text');
       }
 
-      // ======================
-      // SAVE TEXT
-      // ======================
+      /**
+       * ======================
+       * SAVE TEXT
+       * ======================
+       */
       const fullText = textPerPage.join('\n');
 
       await Document.findByIdAndUpdate(documentId, {
@@ -112,17 +165,20 @@ const worker = new Worker(
         pages: pages || textPerPage.length
       });
 
-      // ======================
-      // CHUNKS
-      // ======================
+      /**
+       * ======================
+       * CHUNKS
+       * ======================
+       */
       await Chunk.deleteMany({ documentId });
+      await Embedding.deleteMany({ documentId });
 
       const filteredPages = textPerPage
-        .map(t => (t || "").trim())
+        .map(t => (t || '').trim())
         .filter(t => t.length > 0);
 
-      if (filteredPages.length === 0) {
-        throw new Error("OCR returned empty text after filtering");
+      if (!filteredPages.length) {
+        throw new Error('OCR returned empty text after filtering');
       }
 
       const chunkDocs = await Chunk.insertMany(
@@ -134,20 +190,28 @@ const worker = new Worker(
         }))
       );
 
-      // ======================
-      // EMBEDDINGS
-      // ======================
+      /**
+       * ======================
+       * EMBEDDINGS
+       * ======================
+       */
       const texts = chunkDocs.map(c => c.text);
 
       const embeddings = await generateEmbeddings(texts);
 
-      if (!Array.isArray(embeddings) || embeddings.length !== texts.length) {
-        throw new Error("Embedding generation failed");
+      if (
+        !Array.isArray(embeddings) ||
+        embeddings.length !== texts.length
+      ) {
+        throw new Error('Embedding generation failed');
       }
 
       const ops = embeddings.map((vec, i) => ({
         updateOne: {
-          filter: { documentId, chunkId: chunkDocs[i]._id },
+          filter: {
+            documentId,
+            chunkId: chunkDocs[i]._id
+          },
           update: {
             $set: {
               documentId,
@@ -162,17 +226,31 @@ const worker = new Worker(
 
       await Embedding.bulkWrite(ops);
 
-      // ======================
-      // DONE
-      // ======================
+      /**
+       * OPTIONAL VECTOR STORE
+       */
+      if (upsertEmbeddings) {
+        try {
+          await upsertEmbeddings(documentId, chunkDocs, embeddings);
+        } catch (e) {
+          console.warn('Vector store skipped:', e.message);
+        }
+      }
+
+      /**
+       * ======================
+       * DONE
+       * ======================
+       */
       await Document.findByIdAndUpdate(documentId, {
-        status: 'ready'
+        status: 'ready',
+        errorMessage: null
       });
 
       console.log('✅ Done:', documentId);
 
     } catch (err) {
-      console.error('❌ Error:', err.response?.data || err.message);
+      console.error('❌ Error:', err?.response?.data || err.message);
 
       await Document.findByIdAndUpdate(documentId, {
         status: 'error',
@@ -182,9 +260,30 @@ const worker = new Worker(
       throw err;
     }
   },
-  { connection }
+  {
+    connection,
+    concurrency: WORKER_CONCURRENCY
+  }
 );
 
+/**
+ * ==============================
+ * EVENTS
+ * ==============================
+ */
+worker.on('completed', job => {
+  console.log(`🎉 Job completed: ${job.id}`);
+});
+
+worker.on('failed', (job, err) => {
+  console.error(`💥 Job failed: ${job?.id}`, err.message);
+});
+
+/**
+ * ==============================
+ * EXPORTS
+ * ==============================
+ */
 module.exports = {
   documentQueue,
   addDocumentProcessingJob,
